@@ -1,0 +1,45 @@
+{
+  "client": {
+    "name": "Home",
+    "server_url": "ws://127.0.0.1:8320/v1/client/ws",
+    "key": "replace-with-client-specific-key",
+    "protocol": 2
+  },
+  "refresh": {
+    "enabled": false
+  },
+  "cpa": {
+    "base_url": "http://127.0.0.1:8317",
+    "management_key": "plaintext-management-password",
+    "timeout": 15,
+    "quota_timeout": 25,
+    "quota_concurrency": 4,
+    "quota_cache_ttl": 60
+  },
+  "volcengine": {
+    "accounts": [
+      { "name": "火山主号", "access_key_id": "AKLT…", "secret_access_key": "…", "region": "cn-beijing" }
+    ]
+  },
+  "workbuddy": {
+    "servers": [
+      { "name": "wb-main", "base_url": "http://127.0.0.1:7863", "username": "admin", "password": "workbuddy", "api_key": "", "timeout": 30 }
+    ]
+  },
+  "qoder": {
+    "servers": [
+      { "name": "qoder-main", "base_url": "http://127.0.0.1:8000", "api_key": "…", "timeout": 30 }
+    ]
+  },
+  "refreshcache": {
+    "default": 60,
+    "channels": {
+      "claude": 120,
+      "codex": 300
+    }
+  },
+  "reconnect": {
+    "min": 1,
+    "max": 30
+  }
+}

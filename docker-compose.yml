@@ -1,10 +1,8 @@
 services:
   quotanoa-client:
     image: ghcr.io/leisurelyyrsc/quotanoa-client:latest
-    pull_policy: always
+    container_name: quotanoa-client
     restart: unless-stopped
-    init: true
-    env_file:
-      - .env
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./config.json:/config/config.json:ro
+    command: ["run", "--config", "/config/config.json"]

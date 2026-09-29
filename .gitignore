@@ -1,14 +1,17 @@
-__pycache__/
-*.py[cod]
-.venv/
-venv/
+# Secrets / local config
+config.json
 .env
-.env.*
-!.env.example
+
+# Build artifacts
+/quotanoa-client
+/quotanoa-client.exe
+*.exe
+dist/
+bin/
+
+# Logs / OS / IDE
 *.log
 .DS_Store
+Thumbs.db
 .idea/
 .vscode/
-dist/
-build/
-*.egg-info/
