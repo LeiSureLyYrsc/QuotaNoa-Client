@@ -55,3 +55,13 @@ func TestValidateRequiresKey(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestDefaultCacheTTL(t *testing.T) {
+	cfg := Default()
+	if cfg.RefreshCache.Default != 600 {
+		t.Fatalf("expected 10-minute default cache, got %g", cfg.RefreshCache.Default)
+	}
+	if cfg.CPA.QuotaCacheTTL != 0 {
+		t.Fatalf("expected cpa.quota_cache_ttl to follow refreshcache (0), got %g", cfg.CPA.QuotaCacheTTL)
+	}
+}

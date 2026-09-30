@@ -20,13 +20,14 @@ import (
 
 // Service handles one client's protocol requests.
 type Service struct {
-	cfg *config.Config
-	cpa *quota.Collector
+	cfg   *config.Config
+	cpa   *quota.Collector
+	local *channels.Collector
 }
 
 // New builds a service.
 func New(cfg *config.Config) *Service {
-	return &Service{cfg: cfg, cpa: quota.New(cfg)}
+	return &Service{cfg: cfg, cpa: quota.New(cfg), local: channels.New(cfg)}
 }
 
 // Capabilities reports local abilities (authoritative).
@@ -94,8 +95,23 @@ func (s *Service) handleQuotaQuery(ctx context.Context, payload json.RawMessage)
 	account := req.Account
 	hasAccount := account != nil && strings.TrimSpace(*account) != ""
 
-	var accounts []model.AccountQuota
-	cached := false
+	var (
+		accounts  []model.AccountQuota
+		oldest    time.Time
+		anyCached bool
+	)
+	track := func(list []model.AccountQuota, fetchedAt time.Time, cached bool) {
+		if len(list) == 0 {
+			return
+		}
+		accounts = append(accounts, list...)
+		if cached {
+			anyCached = true
+		}
+		if !fetchedAt.IsZero() && (oldest.IsZero() || fetchedAt.Before(oldest)) {
+			oldest = fetchedAt
+		}
+	}
 
 	switch {
 	case platform == "" && hasAccount:
@@ -103,57 +119,77 @@ func (s *Service) handleQuotaQuery(ctx context.Context, payload json.RawMessage)
 		if err != nil {
 			return protocol.QuotaQueryResult{}, err
 		}
-		accounts = result.Accounts
-		cached = result.Cached
+		track(result.Accounts, result.FetchedAt, result.Cached)
 	case platform == "":
 		result, err := s.cpa.CollectCPA(ctx, nil, nil, req.Fresh)
 		if err != nil {
 			return protocol.QuotaQueryResult{}, err
 		}
-		accounts = append(accounts, result.Accounts...)
-		cached = result.Cached
+		track(result.Accounts, result.FetchedAt, result.Cached)
 		for _, channel := range channels.Supported() {
-			local, lerr := channels.Collect(ctx, channel, s.cfg, channels.Options{Fresh: req.Fresh})
+			list, fetchedAt, cached, lerr := s.local.Collect(ctx, channel, channels.Options{Fresh: req.Fresh})
 			if lerr != nil {
 				continue
 			}
-			accounts = append(accounts, local...)
+			track(list, fetchedAt, cached)
 		}
 	case quota.IsLocalChannel(platform):
-		local, err := channels.Collect(ctx, platform, s.cfg, channels.Options{Fresh: req.Fresh})
+		list, fetchedAt, cached, err := s.local.Collect(ctx, platform, channels.Options{Fresh: req.Fresh})
 		if err != nil {
 			return protocol.QuotaQueryResult{}, err
 		}
 		if hasAccount {
-			local = filterAccounts(local, *account)
-			if len(local) == 0 {
+			list = filterAccounts(list, *account)
+			if len(list) == 0 {
 				return protocol.QuotaQueryResult{}, fmt.Errorf("没有找到 %s 账号：%s", platform, *account)
 			}
 		}
-		accounts = local
+		track(list, fetchedAt, cached)
 	default:
 		result, err := s.cpa.CollectCPA(ctx, &platform, account, req.Fresh)
 		if err != nil {
 			return protocol.QuotaQueryResult{}, err
 		}
-		accounts = result.Accounts
-		cached = result.Cached
+		track(result.Accounts, result.FetchedAt, result.Cached)
 	}
 
 	dtos := make([]protocol.AccountQuotaDTO, 0, len(accounts))
-	for _, account := range accounts {
-		account.Instance = s.cfg.Client.Name
-		dtos = append(dtos, protocol.AccountDTOFromModel(account))
+	for _, item := range accounts {
+		item.Instance = s.cfg.Client.Name
+		dtos = append(dtos, protocol.AccountDTOFromModel(item))
 	}
 	if len(dtos) > protocol.MaxAccounts {
 		dtos = dtos[:protocol.MaxAccounts]
 	}
+
+	now := time.Now()
+	queriedAt := now
+	if !oldest.IsZero() {
+		queriedAt = oldest
+	}
+	cacheAge := now.Sub(queriedAt).Seconds()
+	if cacheAge < 0 {
+		cacheAge = 0
+	}
 	return protocol.QuotaQueryResult{
 		ClientName: s.cfg.Client.Name,
-		QueriedAt:  time.Now().UTC().Format(time.RFC3339),
-		Cached:     cached,
+		QueriedAt:  queriedAt.UTC().Format(time.RFC3339),
+		Cached:     anyCached,
+		CacheAge:   cacheAge,
+		CacheTTL:   s.effectiveTTL(platform),
 		Accounts:   dtos,
 	}, nil
+}
+
+// effectiveTTL reports the cache TTL (seconds) used for the query scope.
+func (s *Service) effectiveTTL(platform string) float64 {
+	if platform == "" {
+		return s.cfg.RefreshCache.Default
+	}
+	if quota.IsLocalChannel(platform) {
+		return s.local.TTL(platform)
+	}
+	return s.cpa.TTL(platform)
 }
 
 func (s *Service) handleCodexRefresh(ctx context.Context, payload json.RawMessage) (protocol.CodexRefreshResult, error) {

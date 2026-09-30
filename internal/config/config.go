@@ -114,12 +114,14 @@ func Default() *Config {
 			Timeout:          15,
 			QuotaTimeout:     25,
 			QuotaConcurrency: 4,
-			QuotaCacheTTL:    60,
+			// 0 表示不单独指定，跟随 refreshcache.default。
+			QuotaCacheTTL: 0,
 		},
-		Volcengine:   VolcengineConfig{Accounts: []VolcengineAccount{}},
-		Workbuddy:    WorkbuddyConfig{Servers: []WorkbuddyServer{}},
-		Qoder:        QoderConfig{Servers: []QoderServer{}},
-		RefreshCache: RefreshCacheConfig{Default: 60, Channels: map[string]float64{}},
+		Volcengine: VolcengineConfig{Accounts: []VolcengineAccount{}},
+		Workbuddy:  WorkbuddyConfig{Servers: []WorkbuddyServer{}},
+		Qoder:      QoderConfig{Servers: []QoderServer{}},
+		// 默认 10 分钟：正常查询在此期间命中缓存，--fresh 可强制刷新。
+		RefreshCache: RefreshCacheConfig{Default: 600, Channels: map[string]float64{}},
 		Reconnect:    ReconnectConfig{Min: 1, Max: 30},
 	}
 }
@@ -287,6 +289,7 @@ func (c *Config) Redacted() string {
 	fmt.Fprintf(&b, "refresh.enabled=%v\n", c.Refresh.Enabled)
 	fmt.Fprintf(&b, "cpa.base_url=%s management_key=%s\n", c.CPA.BaseURL, mask(c.CPA.ManagementKey))
 	fmt.Fprintf(&b, "channels=%s\n", strings.Join(channels, ", "))
+	fmt.Fprintf(&b, "cache.default=%gs quota_cache_ttl=%gs\n", c.RefreshCache.Default, c.CPA.QuotaCacheTTL)
 	return b.String()
 }
 

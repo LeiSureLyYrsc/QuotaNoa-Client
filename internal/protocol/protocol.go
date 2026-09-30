@@ -108,11 +108,16 @@ type AccountQuotaDTO struct {
 	SubscriptionBadges       [][2]string      `json:"subscription_badges"`
 }
 
-// QuotaQueryResult is the quota.query response payload.
+// QuotaQueryResult is the quota.query response payload. QueriedAt is the time
+// the returned data was actually obtained upstream (the oldest such time when
+// several channels are combined); CacheAge is how long ago that was and is
+// authoritative for display (it is immune to clock skew between the two hosts).
 type QuotaQueryResult struct {
 	ClientName string            `json:"client_name"`
 	QueriedAt  string            `json:"queried_at"`
 	Cached     bool              `json:"cached"`
+	CacheAge   float64           `json:"cache_age"`
+	CacheTTL   float64           `json:"cache_ttl"`
 	Accounts   []AccountQuotaDTO `json:"accounts"`
 }
 

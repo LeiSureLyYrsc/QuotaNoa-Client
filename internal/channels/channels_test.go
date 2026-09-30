@@ -6,7 +6,36 @@ import (
 	"time"
 
 	"github.com/LeiSureLyYrsc/QuotaNoa-Client/internal/config"
+	"github.com/LeiSureLyYrsc/QuotaNoa-Client/internal/model"
 )
+
+func TestLocalCollectorCacheFetchedAt(t *testing.T) {
+	c := New(config.Default())
+	accounts := []model.AccountQuota{{Name: "a"}}
+	c.setCached("qoder", accounts, 600)
+	got, fetchedAt, ok := c.getCached("qoder")
+	if !ok || len(got) != 1 {
+		t.Fatalf("expected cache hit, got %v (ok=%v)", got, ok)
+	}
+	if fetchedAt.IsZero() || time.Since(fetchedAt) > time.Second {
+		t.Fatalf("unexpected fetchedAt: %v", fetchedAt)
+	}
+	c.setCached("zero", accounts, 0)
+	if _, _, ok := c.getCached("zero"); ok {
+		t.Fatal("ttl<=0 must not cache")
+	}
+}
+
+func TestLocalCollectorTTL(t *testing.T) {
+	cfg := config.Default()
+	if got := New(cfg).TTL("qoder"); got != 600 {
+		t.Fatalf("default ttl: got %g", got)
+	}
+	cfg.RefreshCache.Channels = map[string]float64{"qoder": 30}
+	if got := New(cfg).TTL("qoder"); got != 30 {
+		t.Fatalf("channel override: got %g", got)
+	}
+}
 
 func serverFixture() config.WorkbuddyServer {
 	return config.WorkbuddyServer{Name: "wb-main"}

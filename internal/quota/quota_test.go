@@ -1,6 +1,51 @@
 package quota
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"github.com/LeiSureLyYrsc/QuotaNoa-Client/internal/config"
+	"github.com/LeiSureLyYrsc/QuotaNoa-Client/internal/model"
+)
+
+func TestCollectorCacheRecordsFetchedAt(t *testing.T) {
+	c := New(config.Default())
+	accounts := []model.AccountQuota{{Name: "a"}}
+	c.setCached("k", accounts, 600)
+	got, fetchedAt, ok := c.getCached("k")
+	if !ok || len(got) != 1 {
+		t.Fatalf("expected cache hit, got %v (ok=%v)", got, ok)
+	}
+	if fetchedAt.IsZero() || time.Since(fetchedAt) > time.Second {
+		t.Fatalf("unexpected fetchedAt: %v", fetchedAt)
+	}
+	c.setCached("zero", accounts, 0)
+	if _, _, ok := c.getCached("zero"); ok {
+		t.Fatal("ttl<=0 must not cache")
+	}
+}
+
+func TestCollectorTTLPrecedence(t *testing.T) {
+	cfg := config.Default()
+	cfg.RefreshCache.Default = 600
+	cfg.RefreshCache.Channels = map[string]float64{"claude": 120}
+	cfg.CPA.QuotaCacheTTL = 0
+	c := New(cfg)
+	if got := c.TTL("claude"); got != 120 {
+		t.Fatalf("channel override: got %g", got)
+	}
+	if got := c.TTL("codex"); got != 600 {
+		t.Fatalf("default fallback: got %g", got)
+	}
+	cfg.CPA.QuotaCacheTTL = 90
+	c = New(cfg)
+	if got := c.TTL("codex"); got != 90 {
+		t.Fatalf("cpa override: got %g", got)
+	}
+	if got := c.TTL("claude"); got != 120 {
+		t.Fatalf("channel must win over cpa: got %g", got)
+	}
+}
 
 func TestParseCodexUsage(t *testing.T) {
 	body := map[string]any{

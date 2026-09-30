@@ -85,11 +85,11 @@ docker run --rm -v "$PWD/config.json:/config/config.json:ro" \
 {
   "client": { "name": "Home", "server_url": "ws://127.0.0.1:8320/v1/client/ws", "key": "…", "protocol": 2 },
   "refresh": { "enabled": false },
-  "cpa": { "base_url": "http://127.0.0.1:8317", "management_key": "…", "timeout": 15, "quota_timeout": 25, "quota_concurrency": 4, "quota_cache_ttl": 60 },
+  "cpa": { "base_url": "http://127.0.0.1:8317", "management_key": "…", "timeout": 15, "quota_timeout": 25, "quota_concurrency": 4, "quota_cache_ttl": 0 },
   "volcengine": { "accounts": [ { "name": "火山主号", "access_key_id": "…", "secret_access_key": "…", "region": "cn-beijing" } ] },
   "workbuddy": { "servers": [ { "name": "wb-main", "base_url": "http://127.0.0.1:7863", "username": "admin", "password": "…", "api_key": "", "timeout": 30 } ] },
   "qoder": { "servers": [ { "name": "qoder-main", "base_url": "http://127.0.0.1:8000", "api_key": "…", "timeout": 30 } ] },
-  "refreshcache": { "default": 60, "channels": { "claude": 120, "codex": 300 } },
+  "refreshcache": { "default": 600, "channels": { "claude": 120, "codex": 300 } },
   "reconnect": { "min": 1, "max": 30 }
 }
 ```
@@ -102,7 +102,7 @@ docker run --rm -v "$PWD/config.json:/config/config.json:ro" \
 | `refresh.enabled` | `false` | Codex 刷新开关（本地权威） |
 | `cpa.*` | — | 本机 CLIProxyAPI 连接与额度查询参数 |
 | `volcengine/workbuddy/qoder` | — | 本地渠道凭据 |
-| `refreshcache` | `60` | 各渠道额度缓存秒数；`0` 不缓存 |
+| `refreshcache` | `600` | 各渠道额度缓存秒数（默认 10 分钟）；`channels` 按渠道覆盖；`0` 不缓存。`--fresh` 强制刷新 |
 
 ## Bot 服务端配置（回顾）
 

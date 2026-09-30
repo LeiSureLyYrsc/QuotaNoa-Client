@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/LeiSureLyYrsc/QuotaNoa-Client/internal/config"
@@ -22,18 +23,98 @@ func Supported() []string {
 	return []string{"volcengine", "workbuddy", "qoder"}
 }
 
-// Collect dispatches to the local channel collector.
-func Collect(ctx context.Context, platform string, cfg *config.Config, opts Options) ([]model.AccountQuota, error) {
+// Collector caches local-channel quota results with a per-channel TTL,
+// mirroring the CPA collector. Fresh bypasses the cache.
+type Collector struct {
+	cfg   *config.Config
+	mu    sync.Mutex
+	cache map[string]cacheEntry
+}
+
+type cacheEntry struct {
+	expires   time.Time
+	fetchedAt time.Time
+	accounts  []model.AccountQuota
+}
+
+// New builds a local-channel collector.
+func New(cfg *config.Config) *Collector {
+	return &Collector{cfg: cfg, cache: map[string]cacheEntry{}}
+}
+
+// ClearCache drops all cached local-channel results.
+func (c *Collector) ClearCache() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cache = map[string]cacheEntry{}
+}
+
+// TTL reports the effective cache TTL (seconds) for a local channel.
+func (c *Collector) TTL(platform string) float64 {
+	if platform != "" {
+		if v, ok := c.cfg.RefreshCache.Channels[platform]; ok {
+			return v
+		}
+	}
+	if c.cfg.CPA.QuotaCacheTTL > 0 {
+		return c.cfg.CPA.QuotaCacheTTL
+	}
+	return c.cfg.RefreshCache.Default
+}
+
+func (c *Collector) getCached(key string) ([]model.AccountQuota, time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.cache[key]
+	if !ok || time.Now().After(entry.expires) {
+		delete(c.cache, key)
+		return nil, time.Time{}, false
+	}
+	return entry.accounts, entry.fetchedAt, true
+}
+
+func (c *Collector) setCached(key string, accounts []model.AccountQuota, ttl float64) {
+	if ttl <= 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	c.cache[key] = cacheEntry{
+		expires:   now.Add(time.Duration(ttl * float64(time.Second))),
+		fetchedAt: now,
+		accounts:  accounts,
+	}
+}
+
+// Collect returns a channel's accounts plus the time the data was actually
+// obtained upstream and whether the result was served from cache.
+func (c *Collector) Collect(ctx context.Context, platform string, opts Options) ([]model.AccountQuota, time.Time, bool, error) {
+	if !opts.Fresh {
+		if accounts, fetchedAt, ok := c.getCached(platform); ok {
+			return accounts, fetchedAt, true, nil
+		}
+	}
+	var (
+		accounts []model.AccountQuota
+		err      error
+	)
 	switch platform {
 	case "volcengine":
-		return collectVolcengine(ctx, cfg)
+		accounts, err = collectVolcengine(ctx, c.cfg)
 	case "workbuddy":
-		return collectWorkbuddy(ctx, cfg)
+		accounts, err = collectWorkbuddy(ctx, c.cfg)
 	case "qoder":
-		return collectQoder(ctx, cfg)
+		accounts, err = collectQoder(ctx, c.cfg)
 	default:
-		return nil, fmt.Errorf("本地渠道未实现：%s", platform)
+		return nil, time.Time{}, false, fmt.Errorf("本地渠道未实现：%s", platform)
 	}
+	if err != nil {
+		return nil, time.Time{}, false, err
+	}
+	fetchedAt := time.Now()
+	c.setCached(platform, accounts, c.TTL(platform))
+	return accounts, fetchedAt, false, nil
 }
 
 // --------------------------------------------------------------------------- #

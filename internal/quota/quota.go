@@ -78,10 +78,13 @@ func PlatformOf(file map[string]any) string {
 	return canonical
 }
 
-// Result is a CPA collection outcome.
+// Result is a CPA collection outcome. FetchedAt is the time the data was
+// actually obtained upstream (the time the cached entry was written); it is
+// preserved when the result is served from cache so callers can report the age.
 type Result struct {
-	Accounts []model.AccountQuota
-	Cached   bool
+	Accounts  []model.AccountQuota
+	Cached    bool
+	FetchedAt time.Time
 }
 
 // Collector queries the local CLIProxyAPI.
@@ -93,8 +96,9 @@ type Collector struct {
 }
 
 type cacheEntry struct {
-	expires  time.Time
-	accounts []model.AccountQuota
+	expires   time.Time
+	fetchedAt time.Time
+	accounts  []model.AccountQuota
 }
 
 // New builds a CPA collector.
@@ -125,15 +129,21 @@ func (c *Collector) ttl(platform string) float64 {
 	return c.cfg.RefreshCache.Default
 }
 
-func (c *Collector) getCached(key string) ([]model.AccountQuota, bool) {
+// TTL reports the effective cache TTL (seconds) for a platform, resolving the
+// per-channel override, then the CPA-specific value, then the shared default.
+func (c *Collector) TTL(platform string) float64 {
+	return c.ttl(NormalizePlatform(platform))
+}
+
+func (c *Collector) getCached(key string) ([]model.AccountQuota, time.Time, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	entry, ok := c.cache[key]
 	if !ok || time.Now().After(entry.expires) {
 		delete(c.cache, key)
-		return nil, false
+		return nil, time.Time{}, false
 	}
-	return entry.accounts, true
+	return entry.accounts, entry.fetchedAt, true
 }
 
 func (c *Collector) setCached(key string, accounts []model.AccountQuota, ttl float64) {
@@ -142,7 +152,12 @@ func (c *Collector) setCached(key string, accounts []model.AccountQuota, ttl flo
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.cache[key] = cacheEntry{expires: time.Now().Add(time.Duration(ttl * float64(time.Second))), accounts: accounts}
+	now := time.Now()
+	c.cache[key] = cacheEntry{
+		expires:   now.Add(time.Duration(ttl * float64(time.Second))),
+		fetchedAt: now,
+		accounts:  accounts,
+	}
 }
 
 // CollectCPA queries credentials, optionally limited to a platform or a single
@@ -187,15 +202,15 @@ func (c *Collector) CollectCPA(ctx context.Context, platform *string, account *s
 
 	cacheKey := c.cacheKey(files, platformName, single)
 	if !force && !single {
-		if cached, ok := c.getCached(cacheKey); ok {
-			return &Result{Accounts: cached, Cached: true}, nil
+		if cached, fetchedAt, ok := c.getCached(cacheKey); ok {
+			return &Result{Accounts: cached, Cached: true, FetchedAt: fetchedAt}, nil
 		}
 	}
 	accounts := c.collectFiles(ctx, target, skipDisabled)
 	if !single {
 		c.setCached(cacheKey, accounts, c.ttl(platformName))
 	}
-	return &Result{Accounts: accounts}, nil
+	return &Result{Accounts: accounts, FetchedAt: time.Now()}, nil
 }
 
 func (c *Collector) cacheKey(files []map[string]any, platform string, single bool) string {
