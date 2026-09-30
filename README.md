@@ -169,16 +169,34 @@ docker run --rm -v "$PWD/config.json:/config/config.json:ro" \
 
 ## Bot 服务端配置（回顾）
 
-Bot 侧 `.env`：
+Bot 侧的 Server 模式配置存放在**独立文件** `data/quotanoa_client.json`（首次启动自动生成）：
 
-```env
-QUOTANOA_CLIENT_SERVER_ENABLED=true
-QUOTANOA_CLIENT_HOST=127.0.0.1
-QUOTANOA_CLIENT_PORT=8320
-# QUOTANOA_CLIENT_FILE=data/quotanoa_client.json
+```jsonc
+{
+  "server": { "enabled": true, "server_name": "Server", "host": "127.0.0.1", "port": 8320 },
+  "clients": [ { "name": "Local", "key": "…", "allow_refresh": false, "note": "" } ]
+}
 ```
 
-用 `/quotanoa client add <名称> [--allow-refresh]` 创建客户端实例并获取连接地址与密钥。
+`.env` 只需要可选地覆盖配置文件路径：`QUOTANOA_CLIENT_CONFIG_FILE=data/quotanoa_client.json`。用 `/quotanoa client add <名称> [--allow-refresh]` 创建客户端实例并获取连接地址与密钥；`server.enabled` 可用 `/quotanoa client server on` 热开启。
+
+## 故障排查
+
+客户端连接失败时会打印 HTTP 状态码、服务端返回的原因以及可操作提示；首次连接失败额外给出一次性排查清单。
+
+| 现象 | 含义 | 处理 |
+| --- | --- | --- |
+| `HTTP 403：客户端未注册` | Bot 的 `clients` 列表里没有该名称 | `/quotanoa client list` 确认名称；`/quotanoa client add <名称>` 创建 |
+| `HTTP 403：鉴权失败` | 密钥不一致（含轮换后未同步） | 用 `/quotanoa client show <名称>` 比对，或 `/quotanoa client key <名称> --rotate` 后同步 `client.key` |
+| `HTTP 403：名称已被本机客户端占用` | 用了服务端保留名 `server_name` | 换一个 `client.name` |
+| `HTTP 403：同名客户端已在线` | 同名实例重复连接（如多开进程） | 关闭多余进程，或改用不同名称 |
+| `HTTP 404` | 路径错误 | 确认 `client.server_url` 以 `/v1/client/ws` 结尾 |
+| `无法连接服务端` | 服务端未监听 / 地址不可达 | Bot 侧 `/quotanoa client server on`；核对 host、port 与网络 |
+| `连接被服务端关闭：1008 …` | 握手后被策略性关闭 | 检查密钥、名称占用与协议版本 |
+
+> 注册表是**热生效**的：在 Bot 侧新增/删除客户端无需重启监听，下一次连接即可用。
+
+
 
 ## 协议
 

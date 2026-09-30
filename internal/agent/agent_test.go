@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -97,5 +99,90 @@ func TestRefreshDisabledOverWebSocket(t *testing.T) {
 	}
 	if !strings.Contains(refreshErr, "未启用") {
 		t.Fatalf("unexpected rejection message: %q", refreshErr)
+	}
+}
+
+// TestDialErrorSurfacesServerReason verifies a rejected handshake surfaces both
+// the HTTP status and the reason body the server sent (e.g. "客户端未注册").
+func TestDialErrorSurfacesServerReason(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "客户端未注册", http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	cfg := config.Default()
+	cfg.Client.Name = "Local"
+	cfg.Client.Key = "secret"
+	cfg.Client.ServerURL = "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/client/ws"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	connected, err := New(cfg).session(ctx)
+	if connected {
+		t.Fatal("expected the handshake to be rejected")
+	}
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "403") {
+		t.Fatalf("missing HTTP status: %q", msg)
+	}
+	if !strings.Contains(msg, "客户端未注册") {
+		t.Fatalf("missing server-provided reason: %q", msg)
+	}
+	if !strings.Contains(msg, "client list") {
+		t.Fatalf("missing actionable hint: %q", msg)
+	}
+}
+
+// TestDialErrorUnreachableServer covers the transport-level failure path.
+func TestDialErrorUnreachableServer(t *testing.T) {
+	cfg := config.Default()
+	cfg.Client.ServerURL = "ws://127.0.0.1:1/v1/client/ws"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := New(cfg).session(ctx)
+	if err == nil {
+		t.Fatal("expected a connection error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "无法连接服务端") {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+	if !strings.Contains(msg, "server on") {
+		t.Fatalf("missing enable hint: %q", msg)
+	}
+}
+
+// TestDescribeSessionErrorCloseReason checks server-initiated closes are
+// reported with their code and reason instead of a bare transport error.
+func TestDescribeSessionErrorCloseReason(t *testing.T) {
+	err := describeSessionError(websocket.CloseError{
+		Code:   websocket.StatusPolicyViolation,
+		Reason: "客户端未注册",
+	})
+	msg := err.Error()
+	if !strings.Contains(msg, "1008") || !strings.Contains(msg, "客户端未注册") {
+		t.Fatalf("missing close code/reason: %q", msg)
+	}
+	if !strings.Contains(msg, "client.key") {
+		t.Fatalf("expected a policy-violation hint: %q", msg)
+	}
+
+	// An empty reason falls back to a human-readable status text.
+	err = describeSessionError(websocket.CloseError{Code: websocket.StatusGoingAway})
+	if !strings.Contains(err.Error(), "服务端正在关闭") {
+		t.Fatalf("expected status text fallback: %q", err.Error())
+	}
+
+	// Ordinary errors keep their cause.
+	err = describeSessionError(io.ErrUnexpectedEOF)
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("cause must be preserved: %v", err)
+	}
+	if !strings.Contains(err.Error(), "连接中断") {
+		t.Fatalf("unexpected message: %q", err.Error())
 	}
 }
