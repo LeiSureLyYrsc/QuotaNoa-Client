@@ -146,3 +146,91 @@ func TestPatchRefusesNewerVersion(t *testing.T) {
 		t.Fatal("expected refusal for a newer config_version")
 	}
 }
+
+func TestNormalizeSection(t *testing.T) {
+	cases := map[string]string{
+		"cpa": "cpa", "volc": "volcengine", "火山": "volcengine", "wb": "workbuddy", "qoder": "qoder",
+	}
+	for input, want := range cases {
+		got, ok := NormalizeSection(input)
+		if !ok || got != want {
+			t.Fatalf("NormalizeSection(%q) = %q, %v; want %q", input, got, ok, want)
+		}
+	}
+	if _, ok := NormalizeSection("nope"); ok {
+		t.Fatal("expected unknown section to be rejected")
+	}
+}
+
+func TestAddListRemoveEntry(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := SaveDefault(path, false); err != nil {
+		t.Fatal(err)
+	}
+	// Seed an unknown field to confirm it survives read-modify-write.
+	seed, _ := os.ReadFile(path)
+	raw := map[string]any{}
+	if err := json.Unmarshal(seed, &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw["custom_unknown"] = "keep-me"
+	seeded, _ := json.MarshalIndent(raw, "", "  ")
+	if err := os.WriteFile(path, seeded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	backup, err := AddEntry(path, "cpa", "Home", map[string]any{
+		"name": "Home", "base_url": "http://127.0.0.1:8317", "management_key": "k",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backup == "" {
+		t.Fatal("expected a backup path")
+	}
+	if _, err := os.Stat(backup); err != nil {
+		t.Fatalf("backup missing: %v", err)
+	}
+	entries, err := ListEntries(path, "cpa")
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("entries=%v err=%v", entries, err)
+	}
+	if _, err := AddEntry(path, "cpa", "Home", map[string]any{"name": "Home"}); err == nil {
+		t.Fatal("expected duplicate name rejection")
+	}
+	// Alias + a second section.
+	if _, err := AddEntry(path, "火山", "volc-main", map[string]any{
+		"name": "volc-main", "access_key_id": "AK", "secret_access_key": "SK",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	removed, removeBackup, err := RemoveEntry(path, "cpa", "Home")
+	if err != nil || !removed || removeBackup == "" {
+		t.Fatalf("remove: removed=%v backup=%q err=%v", removed, removeBackup, err)
+	}
+	removed, _, err = RemoveEntry(path, "cpa", "Home")
+	if err != nil || removed {
+		t.Fatalf("second remove must be a no-op: removed=%v err=%v", removed, err)
+	}
+
+	after, _ := os.ReadFile(path)
+	out := map[string]any{}
+	if err := json.Unmarshal(after, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["config_version"] != float64(CurrentConfigVersion) {
+		t.Fatalf("config_version not preserved: %v", out["config_version"])
+	}
+	if out["custom_unknown"] != "keep-me" {
+		t.Fatal("unknown field must survive read-modify-write")
+	}
+	accounts, _ := out["volcengine"].(map[string]any)["accounts"].([]any)
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 volcengine account, got %d", len(accounts))
+	}
+	instances, _ := out["cpa"].(map[string]any)["instances"].([]any)
+	if len(instances) != 0 {
+		t.Fatalf("expected 0 cpa instances after remove, got %d", len(instances))
+	}
+}

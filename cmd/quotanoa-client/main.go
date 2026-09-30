@@ -106,6 +106,132 @@ func main() {
 			return nil
 		},
 	}
+	var (
+		addName         string
+		addBaseURL      string
+		addKey          string
+		addTimeout      float64
+		addQuotaTimeout float64
+		addConcurrency  int
+		addCacheTTL     float64
+		addNoImage      bool
+		addAK           string
+		addSK           string
+		addRegion       string
+		addUsername     string
+		addPassword     string
+		addAPIKey       string
+		removeName      string
+	)
+	addCmd := &cobra.Command{
+		Use:   "add <cpa|volc|wb|qoder> [flags]",
+		Short: "添加实例/账号（CPA / 火山 / WorkBuddy / Qoder）",
+		Long: "添加实例/账号到配置文件。类型别名：cpa、volc/火山、wb/workbuddy、qoder。\n" +
+			"写入前会自动备份原配置。",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			key, ok := config.NormalizeSection(args[0])
+			if !ok {
+				return fmt.Errorf("未知类型：%s（可选 cpa / volc / wb / qoder）", args[0])
+			}
+			entry, err := buildEntry(key, entryInput{
+				name: addName, baseURL: addBaseURL, key: addKey,
+				timeout: addTimeout, quotaTimeout: addQuotaTimeout,
+				concurrency: addConcurrency, cacheTTL: addCacheTTL, noImage: addNoImage,
+				ak: addAK, sk: addSK, region: addRegion,
+				username: addUsername, password: addPassword, apiKey: addAPIKey,
+			})
+			if err != nil {
+				return err
+			}
+			backup, err := config.AddEntry(configPath, key, addName, entry)
+			if err != nil {
+				return err
+			}
+			abs, _ := filepath.Abs(configPath)
+			fmt.Printf("已添加 %s：%s\n配置文件：%s\n", config.SectionLabel(key), strings.TrimSpace(addName), abs)
+			if backup != "" {
+				backupAbs, _ := filepath.Abs(backup)
+				fmt.Printf("备份：%s\n", backupAbs)
+			}
+			return nil
+		},
+	}
+	addCmd.Flags().StringVar(&addName, "name", "", "名称（必填，需唯一）")
+	addCmd.Flags().StringVar(&addBaseURL, "base-url", "", "服务地址（cpa/wb/qoder 必填）")
+	addCmd.Flags().StringVar(&addKey, "key", "", "CPA management_key")
+	addCmd.Flags().Float64Var(&addTimeout, "timeout", 0, "请求超时秒")
+	addCmd.Flags().Float64Var(&addQuotaTimeout, "quota-timeout", 0, "额度查询超时秒（cpa）")
+	addCmd.Flags().IntVar(&addConcurrency, "concurrency", 0, "额度查询并发（cpa）")
+	addCmd.Flags().Float64Var(&addCacheTTL, "cache-ttl", 0, "实例级缓存秒，0=跟随 refreshcache（cpa）")
+	addCmd.Flags().BoolVar(&addNoImage, "no-image", false, "该实例关闭图片渲染（cpa）")
+	addCmd.Flags().StringVar(&addAK, "ak", "", "火山 AccessKey ID")
+	addCmd.Flags().StringVar(&addSK, "sk", "", "火山 SecretAccessKey")
+	addCmd.Flags().StringVar(&addRegion, "region", "cn-beijing", "火山 region")
+	addCmd.Flags().StringVar(&addUsername, "username", "", "WorkBuddy 用户名")
+	addCmd.Flags().StringVar(&addPassword, "password", "", "WorkBuddy 密码")
+	addCmd.Flags().StringVar(&addAPIKey, "api-key", "", "WorkBuddy / Qoder api_key")
+
+	listCmd := &cobra.Command{
+		Use:   "list [cpa|volc|wb|qoder]",
+		Short: "列出配置中的实例/账号（省略类型则列出全部）",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			keys := config.SectionOrder
+			if len(args) == 1 {
+				key, ok := config.NormalizeSection(args[0])
+				if !ok {
+					return fmt.Errorf("未知类型：%s（可选 cpa / volc / wb / qoder）", args[0])
+				}
+				keys = []string{key}
+			}
+			abs, _ := filepath.Abs(configPath)
+			fmt.Printf("配置文件：%s\n", abs)
+			for i, key := range keys {
+				if i > 0 {
+					fmt.Println()
+				}
+				entries, err := config.ListEntries(configPath, key)
+				if err != nil {
+					return err
+				}
+				printEntries(key, entries)
+			}
+			return nil
+		},
+	}
+
+	removeCmd := &cobra.Command{
+		Use:     "remove <cpa|volc|wb|qoder> --name <名称>",
+		Aliases: []string{"rm"},
+		Short:   "按名称删除实例/账号（写入前自动备份）",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			key, ok := config.NormalizeSection(args[0])
+			if !ok {
+				return fmt.Errorf("未知类型：%s（可选 cpa / volc / wb / qoder）", args[0])
+			}
+			if strings.TrimSpace(removeName) == "" {
+				return fmt.Errorf("必须用 --name 指定要删除的名称")
+			}
+			removed, backup, err := config.RemoveEntry(configPath, key, removeName)
+			if err != nil {
+				return err
+			}
+			if !removed {
+				fmt.Printf("未找到 %s：%s（未改动）\n", config.SectionLabel(key), strings.TrimSpace(removeName))
+				return nil
+			}
+			fmt.Printf("已删除 %s：%s\n", config.SectionLabel(key), strings.TrimSpace(removeName))
+			if backup != "" {
+				backupAbs, _ := filepath.Abs(backup)
+				fmt.Printf("备份：%s\n", backupAbs)
+			}
+			return nil
+		},
+	}
+	removeCmd.Flags().StringVar(&removeName, "name", "", "要删除的名称（必填）")
+
 	configCmd.AddCommand(&cobra.Command{
 		Use:   "check",
 		Short: "校验配置并打印摘要（不联网）",
@@ -117,7 +243,7 @@ func main() {
 			fmt.Print(cfg.Redacted())
 			return nil
 		},
-	}, initCmd, patchCmd)
+	}, initCmd, patchCmd, addCmd, listCmd, removeCmd)
 
 	root.AddCommand(runCmd, versionCmd, configCmd)
 	root.RunE = runCmd.RunE
@@ -171,4 +297,162 @@ func runGenerate(path string, force bool) {
 	abs, _ := filepath.Abs(path)
 	fmt.Printf("已生成默认配置文件：%s\n请填写 client.server_url 与 client.key 后运行：quotanoa-client run --config %s\n", abs, path)
 	os.Exit(0)
+}
+
+// entryInput collects the flags for `config add`.
+type entryInput struct {
+	name         string
+	baseURL      string
+	key          string
+	timeout      float64
+	quotaTimeout float64
+	concurrency  int
+	cacheTTL     float64
+	noImage      bool
+	ak           string
+	sk           string
+	region       string
+	username     string
+	password     string
+	apiKey       string
+}
+
+// buildEntry validates flags and builds the JSON entry for a section.
+func buildEntry(section string, in entryInput) (map[string]any, error) {
+	name := strings.TrimSpace(in.name)
+	if name == "" {
+		return nil, fmt.Errorf("--name 必填")
+	}
+	entry := map[string]any{"name": name}
+	switch section {
+	case "cpa":
+		base := strings.TrimSpace(in.baseURL)
+		if base == "" {
+			return nil, fmt.Errorf("--base-url 必填（CPA 实例）")
+		}
+		entry["base_url"] = base
+		if in.key != "" {
+			entry["management_key"] = in.key
+		}
+		if in.timeout > 0 {
+			entry["timeout"] = in.timeout
+		}
+		if in.quotaTimeout > 0 {
+			entry["quota_timeout"] = in.quotaTimeout
+		}
+		if in.concurrency > 0 {
+			entry["quota_concurrency"] = in.concurrency
+		}
+		if in.cacheTTL > 0 {
+			entry["quota_cache_ttl"] = in.cacheTTL
+		}
+		if in.noImage {
+			entry["quota_image"] = false
+		}
+	case "volcengine":
+		if strings.TrimSpace(in.ak) == "" || strings.TrimSpace(in.sk) == "" {
+			return nil, fmt.Errorf("--ak 与 --sk 必填（火山账号）")
+		}
+		entry["access_key_id"] = strings.TrimSpace(in.ak)
+		entry["secret_access_key"] = strings.TrimSpace(in.sk)
+		region := strings.TrimSpace(in.region)
+		if region == "" {
+			region = "cn-beijing"
+		}
+		entry["region"] = region
+	case "workbuddy":
+		base := strings.TrimSpace(in.baseURL)
+		if base == "" {
+			return nil, fmt.Errorf("--base-url 必填（WorkBuddy 网关）")
+		}
+		entry["base_url"] = base
+		if in.username != "" {
+			entry["username"] = in.username
+		}
+		if in.password != "" {
+			entry["password"] = in.password
+		}
+		if in.apiKey != "" {
+			entry["api_key"] = in.apiKey
+		}
+		if in.timeout > 0 {
+			entry["timeout"] = in.timeout
+		}
+	case "qoder":
+		base := strings.TrimSpace(in.baseURL)
+		if base == "" {
+			return nil, fmt.Errorf("--base-url 必填（Qoder 代理）")
+		}
+		entry["base_url"] = base
+		if in.apiKey != "" {
+			entry["api_key"] = in.apiKey
+		}
+		if in.timeout > 0 {
+			entry["timeout"] = in.timeout
+		}
+	default:
+		return nil, fmt.Errorf("未知类型：%s", section)
+	}
+	return entry, nil
+}
+
+// printEntries renders one section's entries for `config list`.
+func printEntries(section string, entries []map[string]any) {
+	label := config.SectionLabel(section)
+	if len(entries) == 0 {
+		fmt.Printf("%s：0 个\n", label)
+		return
+	}
+	fmt.Printf("%s：%d 个\n", label, len(entries))
+	for i, entry := range entries {
+		name, _ := entry["name"].(string)
+		detail := entryDetail(section, entry)
+		if detail != "" {
+			fmt.Printf("  %d) %s  %s\n", i+1, name, detail)
+		} else {
+			fmt.Printf("  %d) %s\n", i+1, name)
+		}
+	}
+}
+
+func entryDetail(section string, entry map[string]any) string {
+	str := func(key string) string {
+		value, _ := entry[key].(string)
+		return value
+	}
+	parts := []string{}
+	switch section {
+	case "cpa":
+		if v := str("base_url"); v != "" {
+			parts = append(parts, v)
+		}
+		if v := str("management_key"); v != "" {
+			parts = append(parts, "key="+config.Mask(v))
+		}
+	case "volcengine":
+		if v := str("access_key_id"); v != "" {
+			parts = append(parts, "ak="+config.Mask(v))
+		}
+		if v := str("region"); v != "" {
+			parts = append(parts, "region="+v)
+		}
+	case "workbuddy":
+		if v := str("base_url"); v != "" {
+			parts = append(parts, v)
+		}
+		if v := str("username"); v != "" {
+			parts = append(parts, "user="+v)
+		}
+		if v := str("api_key"); v != "" {
+			parts = append(parts, "api_key="+config.Mask(v))
+		}
+	case "qoder":
+		if v := str("base_url"); v != "" {
+			parts = append(parts, v)
+		}
+		if v := str("api_key"); v != "" {
+			parts = append(parts, "api_key="+config.Mask(v))
+		}
+	}
+	return strings.Join(parts, "  ")
 }

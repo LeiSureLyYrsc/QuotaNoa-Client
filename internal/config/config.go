@@ -541,3 +541,198 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	}
 	return os.Rename(tmpName, path)
 }
+
+// --------------------------------------------------------------------------- #
+// 实例/账号条目管理（config add / list / remove）
+// --------------------------------------------------------------------------- #
+
+// Section describes where a kind of credential entry lives in the config.
+type Section struct {
+	Key     string // canonical key
+	Parent  string // top-level config section
+	ListKey string // array field inside the parent
+	Label   string // human-readable label
+}
+
+// sections maps a canonical section key to its JSON location.
+var sections = map[string]Section{
+	"cpa":        {Key: "cpa", Parent: "cpa", ListKey: "instances", Label: "CPA 实例"},
+	"volcengine": {Key: "volcengine", Parent: "volcengine", ListKey: "accounts", Label: "火山账号"},
+	"workbuddy":  {Key: "workbuddy", Parent: "workbuddy", ListKey: "servers", Label: "WorkBuddy 网关"},
+	"qoder":      {Key: "qoder", Parent: "qoder", ListKey: "servers", Label: "Qoder 代理"},
+}
+
+// SectionOrder is the display order for `config list`.
+var SectionOrder = []string{"cpa", "volcengine", "workbuddy", "qoder"}
+
+var sectionAliases = map[string]string{
+	"cpa":  "cpa",
+	"volc": "volcengine", "volcengine": "volcengine", "火山": "volcengine", "ark": "volcengine",
+	"wb": "workbuddy", "workbuddy": "workbuddy", "work-buddy": "workbuddy",
+	"qoder": "qoder", "qd": "qoder",
+}
+
+// NormalizeSection resolves a user-supplied section name/alias to its canonical
+// key (e.g. "火山" / "volc" -> "volcengine").
+func NormalizeSection(value string) (string, bool) {
+	key, ok := sectionAliases[strings.ToLower(strings.TrimSpace(value))]
+	return key, ok
+}
+
+// SectionLabel returns the display label for a canonical section key.
+func SectionLabel(value string) string {
+	key, ok := NormalizeSection(value)
+	if !ok {
+		return value
+	}
+	return sections[key].Label
+}
+
+// Mask returns a redacted display form of a secret (for list output).
+func Mask(value string) string { return mask(value) }
+
+func readRawConfig(path string) (map[string]any, error) {
+	if path == "" {
+		path = "config.json"
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("读取配置文件失败：%w", err)
+	}
+	raw := map[string]any{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("解析配置文件失败：%w", err)
+	}
+	return raw, nil
+}
+
+// writeRawConfig backs the file up, then atomically writes raw as indented JSON.
+func writeRawConfig(path string, raw map[string]any) (string, error) {
+	backup, err := backupFile(path)
+	if err != nil {
+		return "", err
+	}
+	data, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	data = append(data, '\n')
+	if err := writeFileAtomic(path, data, 0o600); err != nil {
+		return "", err
+	}
+	return backup, nil
+}
+
+func sectionList(raw map[string]any, spec Section) []any {
+	parent, ok := raw[spec.Parent].(map[string]any)
+	if !ok {
+		return nil
+	}
+	list, ok := parent[spec.ListKey].([]any)
+	if !ok {
+		return nil
+	}
+	return list
+}
+
+func entryName(item any) string {
+	if m, ok := item.(map[string]any); ok {
+		if name, ok := m["name"].(string); ok {
+			return strings.TrimSpace(name)
+		}
+	}
+	return ""
+}
+
+// AddEntry appends a credential entry to the given section, rejecting a
+// duplicate name. The previous file is backed up before writing.
+func AddEntry(path, section, name string, entry map[string]any) (string, error) {
+	key, ok := NormalizeSection(section)
+	if !ok {
+		return "", fmt.Errorf("未知类型：%s", section)
+	}
+	spec := sections[key]
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("名称（--name）不能为空")
+	}
+	raw, err := readRawConfig(path)
+	if err != nil {
+		return "", err
+	}
+	for _, item := range sectionList(raw, spec) {
+		if strings.EqualFold(entryName(item), name) {
+			return "", fmt.Errorf("%s 已存在同名条目：%s", spec.Label, name)
+		}
+	}
+	parent, ok := raw[spec.Parent].(map[string]any)
+	if !ok {
+		parent = map[string]any{}
+		raw[spec.Parent] = parent
+	}
+	list, _ := parent[spec.ListKey].([]any)
+	parent[spec.ListKey] = append(list, entry)
+	return writeRawConfig(path, raw)
+}
+
+// RemoveEntry deletes the entry with the given name from a section. It reports
+// whether anything was removed; nothing is written when the name is absent.
+func RemoveEntry(path, section, name string) (bool, string, error) {
+	key, ok := NormalizeSection(section)
+	if !ok {
+		return false, "", fmt.Errorf("未知类型：%s", section)
+	}
+	spec := sections[key]
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false, "", fmt.Errorf("名称（--name）不能为空")
+	}
+	raw, err := readRawConfig(path)
+	if err != nil {
+		return false, "", err
+	}
+	parent, ok := raw[spec.Parent].(map[string]any)
+	if !ok {
+		return false, "", nil
+	}
+	list, _ := parent[spec.ListKey].([]any)
+	kept := make([]any, 0, len(list))
+	removed := false
+	for _, item := range list {
+		if !removed && strings.EqualFold(entryName(item), name) {
+			removed = true
+			continue
+		}
+		kept = append(kept, item)
+	}
+	if !removed {
+		return false, "", nil
+	}
+	parent[spec.ListKey] = kept
+	backup, err := writeRawConfig(path, raw)
+	if err != nil {
+		return false, "", err
+	}
+	return true, backup, nil
+}
+
+// ListEntries returns the credential entries of a section (empty when absent).
+func ListEntries(path, section string) ([]map[string]any, error) {
+	key, ok := NormalizeSection(section)
+	if !ok {
+		return nil, fmt.Errorf("未知类型：%s", section)
+	}
+	spec := sections[key]
+	raw, err := readRawConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	list := sectionList(raw, spec)
+	out := make([]map[string]any, 0, len(list))
+	for _, item := range list {
+		if m, ok := item.(map[string]any); ok {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}

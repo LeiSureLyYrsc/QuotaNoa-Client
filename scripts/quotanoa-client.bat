@@ -11,6 +11,9 @@ rem   interactive      interactive console (aliases: i / menu)
 rem   init [--force]   write a default config file (--force overwrites)
 rem   check            validate the config and print a summary (no network)
 rem   patch            back up, then fill missing keys + write config_version
+rem   add <type> ...   add cpa|volc|wb|qoder entries (backs up first)
+rem   list [type]      list entries
+rem   rm <type> ...    remove an entry by name (alias: remove; backs up first)
 rem   version          print client and protocol version
 rem   run [args]       run in the foreground (Ctrl-C to stop)
 rem   start [args]     run in the background with logging
@@ -87,6 +90,10 @@ if /i "%CMD%"=="stop" goto :cmd_stop
 if /i "%CMD%"=="restart" goto :cmd_restart
 if /i "%CMD%"=="status" goto :cmd_status
 if /i "%CMD%"=="logs" goto :cmd_logs
+if /i "%CMD%"=="add" goto :cmd_add
+if /i "%CMD%"=="list" goto :cmd_list
+if /i "%CMD%"=="rm" goto :cmd_rm
+if /i "%CMD%"=="remove" goto :cmd_rm
 if /i "%CMD%"=="interactive" goto :cmd_interactive
 if /i "%CMD%"=="i" goto :cmd_interactive
 if /i "%CMD%"=="menu" goto :cmd_interactive
@@ -117,6 +124,24 @@ exit /b %errorlevel%
 call :require_bin
 if errorlevel 1 exit /b 1
 "%QUOTANOA_BIN%" config patch --config "%QUOTANOA_CONFIG%"
+exit /b %errorlevel%
+
+:cmd_add
+call :require_bin
+if errorlevel 1 exit /b 1
+"%QUOTANOA_BIN%" config add %REST% --config "%QUOTANOA_CONFIG%"
+exit /b %errorlevel%
+
+:cmd_list
+call :require_bin
+if errorlevel 1 exit /b 1
+"%QUOTANOA_BIN%" config list %REST% --config "%QUOTANOA_CONFIG%"
+exit /b %errorlevel%
+
+:cmd_rm
+call :require_bin
+if errorlevel 1 exit /b 1
+"%QUOTANOA_BIN%" config remove %REST% --config "%QUOTANOA_CONFIG%"
 exit /b %errorlevel%
 
 :cmd_version
@@ -224,9 +249,16 @@ if "!CMD!"=="6" set "CMD=restart"
 if "!CMD!"=="7" set "CMD=status"
 if "!CMD!"=="8" set "CMD=logs"
 if "!CMD!"=="9" set "CMD=version"
+if "!CMD!"=="10" set "CMD=add"
+if "!CMD!"=="11" set "CMD=list"
+if "!CMD!"=="12" set "CMD=rm"
 if /i "!CMD!"=="init" ( call :cmd_init & exit /b 0 )
 if /i "!CMD!"=="check" ( call :cmd_check & exit /b 0 )
 if /i "!CMD!"=="patch" ( call :cmd_patch & exit /b 0 )
+if /i "!CMD!"=="add" ( call :cmd_add & exit /b 0 )
+if /i "!CMD!"=="list" ( call :cmd_list & exit /b 0 )
+if /i "!CMD!"=="rm" ( call :cmd_rm & exit /b 0 )
+if /i "!CMD!"=="remove" ( call :cmd_rm & exit /b 0 )
 if /i "!CMD!"=="version" ( call :cmd_version & exit /b 0 )
 if /i "!CMD!"=="run" ( call :cmd_run & exit /b 0 )
 if /i "!CMD!"=="start" ( call :cmd_start & exit /b 0 )
@@ -244,6 +276,7 @@ echo QuotaNoa Client interactive console ^(input a number or a command, q to qui
 echo   1^) init      2^) check     3^) patch
 echo   4^) start     5^) stop      6^) restart
 echo   7^) status    8^) logs      9^) version
+echo   10^) add     11^) list     12^) rm
 :interactive_loop
 set "LINE="
 set /p "LINE=quotanoa> "
@@ -264,6 +297,9 @@ echo.
 echo   init [--force]   write a default config file (--force overwrites)
 echo   check            validate the config and print a summary (no network)
 echo   patch            back up, then fill missing keys + write config_version
+echo   add ^<type^> ...   add cpa^|volc^|wb^|qoder entries ^(backs up first^)
+echo   list [type]      list entries
+echo   rm ^<type^> ...    remove an entry by name ^(alias: remove^)
 echo   version          print client and protocol version
 echo   run [args]       run in the foreground (Ctrl-C to stop)
 echo   start [args]     run in the background with logging

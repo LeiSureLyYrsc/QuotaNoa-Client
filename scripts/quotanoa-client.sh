@@ -11,6 +11,9 @@
 #   init [--force]   生成默认配置文件（--force 覆盖已存在文件）
 #   check            校验配置并打印摘要（不联网）
 #   patch            备份后补齐配置缺失项并写入 config_version
+#   add <类型> …     添加实例/账号：add cpa|volc|wb|qoder [参数]（写入前自动备份）
+#   list [类型]      列出实例/账号（省略类型列出全部）
+#   rm <类型> …      按名称删除（remove 别名；写入前自动备份）
 #   version          打印客户端与协议版本
 #   run [参数]       前台运行（Ctrl-C 退出）
 #   start [参数]     后台运行并写日志
@@ -76,6 +79,21 @@ cmd_check() {
 cmd_patch() {
     require_bin
     "$BIN" config patch --config "$CONFIG"
+}
+
+cmd_add() {
+    require_bin
+    "$BIN" config add "$@" --config "$CONFIG"
+}
+
+cmd_list() {
+    require_bin
+    "$BIN" config list "$@" --config "$CONFIG"
+}
+
+cmd_rm() {
+    require_bin
+    "$BIN" config remove "$@" --config "$CONFIG"
 }
 
 cmd_version() {
@@ -151,7 +169,7 @@ cmd_logs() {
 }
 
 usage() {
-    sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 #: 交互菜单编号 → 子命令。
@@ -166,6 +184,9 @@ menu_action() {
         7) printf 'status' ;;
         8) printf 'logs' ;;
         9) printf 'version' ;;
+        10) printf 'add' ;;
+        11) printf 'list' ;;
+        12) printf 'rm' ;;
         *) printf '' ;;
     esac
 }
@@ -189,6 +210,9 @@ run_line() {
         init) cmd_init "$@" ;;
         check) cmd_check ;;
         patch) cmd_patch ;;
+        add) cmd_add "$@" ;;
+        list) cmd_list "$@" ;;
+        rm | remove) cmd_rm "$@" ;;
         version) cmd_version ;;
         run) cmd_run "$@" ;;
         start) cmd_start "$@" ;;
@@ -210,6 +234,9 @@ QuotaNoa Client 交互控制台（输入编号或命令，q 退出）
   3) patch     备份并修补配置     8) logs      查看日志（logs 100）
   4) start     后台启动           9) version   版本
   5) stop      停止               q) 退出
+  10) add      添加实例：add cpa --name Home --base-url URL --key K
+  11) list     列出实例：list [cpa|volc|wb|qoder]
+  12) rm       删除实例：rm cpa --name Home
 MENU
     while :; do
         printf 'quotanoa> '
@@ -239,6 +266,9 @@ main() {
         init) cmd_init "$@" ;;
         check) cmd_check ;;
         patch) cmd_patch ;;
+        add) cmd_add "$@" ;;
+        list) cmd_list "$@" ;;
+        rm | remove) cmd_rm "$@" ;;
         version) cmd_version ;;
         run) cmd_run "$@" ;;
         start) cmd_start "$@" ;;

@@ -85,6 +85,9 @@ go build -o quotanoa-client ./cmd/quotanoa-client
 | `init [--force]` | 生成默认配置文件（`--force` 覆盖） |
 | `check` | 校验配置并打印摘要（不联网） |
 | `patch` | 备份后补齐缺失键并写入 `config_version` |
+| `add <类型> …` | 添加实例/账号（`cpa`/`volc`/`wb`/`qoder`，写入前自动备份） |
+| `list [类型]` | 列出实例/账号（省略类型列出全部） |
+| `rm <类型> …` | 按名称删除（`remove` 别名，写入前自动备份） |
 | `version` | 打印客户端与协议版本 |
 | `run [args]` | 前台运行（Ctrl-C 退出） |
 | `start [args]` | 后台运行并写日志 |
@@ -96,6 +99,12 @@ go build -o quotanoa-client ./cmd/quotanoa-client
 ```bash
 # Linux / macOS / Git Bash
 ./scripts/quotanoa-client.sh                 # 不带参数 → 交互控制台
+./scripts/quotanoa-client.sh add cpa --name Home --base-url http://127.0.0.1:8317 --key K
+./scripts/quotanoa-client.sh add volc --name 火山主号 --ak AK --sk SK
+./scripts/quotanoa-client.sh add wb --name wb-main --base-url http://127.0.0.1:7863 --username admin --password pw
+./scripts/quotanoa-client.sh add qoder --name qoder-main --base-url http://127.0.0.1:8000 --api-key K
+./scripts/quotanoa-client.sh list
+./scripts/quotanoa-client.sh rm cpa --name Home
 ./scripts/quotanoa-client.sh start
 ./scripts/quotanoa-client.sh status
 ./scripts/quotanoa-client.sh logs 100
@@ -105,11 +114,17 @@ go build -o quotanoa-client ./cmd/quotanoa-client
 ```bat
 rem Windows CMD
 scripts\quotanoa-client.bat                  rem 不带参数 → 交互控制台
+scripts\quotanoa-client.bat add cpa --name Home --base-url http://127.0.0.1:8317 --key K
+scripts\quotanoa-client.bat add volc --name volc-main --ak AK --sk SK
+scripts\quotanoa-client.bat list
+scripts\quotanoa-client.bat rm cpa --name Home
 scripts\quotanoa-client.bat start
 scripts\quotanoa-client.bat status
 scripts\quotanoa-client.bat logs 100
 scripts\quotanoa-client.bat stop
 ```
+
+> `add`/`rm` 写入前都会把原配置备份成同目录 `<名>_<日期>-<时间>_bak.json`；重名或必填项缺失会报错且不改动文件。`add` 支持的类型别名：`cpa`、`volc`/`火山`、`wb`/`workbuddy`、`qoder`。各类型常用参数：`cpa` 用 `--base-url/--key/--timeout/--quota-timeout/--concurrency/--cache-ttl/--no-image`；`volc` 用 `--ak/--sk/--region`；`wb` 用 `--base-url/--username/--password/--api-key`；`qoder` 用 `--base-url/--api-key`。
 
 > 交互控制台里可直接输入编号（1–9）或子命令（如 `logs 100`、`start --log-level debug`），输入 `q` 退出；单条命令失败不会中断会话。
 
