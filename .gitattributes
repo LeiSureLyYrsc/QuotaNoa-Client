@@ -1,0 +1,5 @@
+# 统一换行，避免 Windows 批处理因 LF 换行导致标签解析失败。
+*.sh   text eol=lf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf

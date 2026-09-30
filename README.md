@@ -75,6 +75,46 @@ go build -o quotanoa-client ./cmd/quotanoa-client
 
 > 生成的配置带顶层 `config_version`（当前为 `1`）。旧版本、缺字段的配置可用 `config patch` 修补：会先把原文件备份为同目录下 `config_<日期>-<时间>_bak.json`，再补齐缺失键、写入当前版本号；已存在的值不会被覆盖。若文件版本高于当前程序支持，则拒绝修补。
 
+## 管理脚本
+
+`scripts/` 下提供 Linux/macOS 与 Windows 的管理脚本，封装了配置与常驻运行：
+
+| 命令 | 说明 |
+| --- | --- |
+| `interactive` | 交互控制台（编号菜单 + 命令提示符，`q` 退出；别名 `i` / `menu`） |
+| `init [--force]` | 生成默认配置文件（`--force` 覆盖） |
+| `check` | 校验配置并打印摘要（不联网） |
+| `patch` | 备份后补齐缺失键并写入 `config_version` |
+| `version` | 打印客户端与协议版本 |
+| `run [args]` | 前台运行（Ctrl-C 退出） |
+| `start [args]` | 后台运行并写日志 |
+| `stop` | 停止后台进程 |
+| `restart [args]` | 重启后台进程 |
+| `status` | 查看运行状态（并打印配置摘要） |
+| `logs [lines]` | 查看后台日志（默认 40 行） |
+
+```bash
+# Linux / macOS / Git Bash
+./scripts/quotanoa-client.sh                 # 不带参数 → 交互控制台
+./scripts/quotanoa-client.sh start
+./scripts/quotanoa-client.sh status
+./scripts/quotanoa-client.sh logs 100
+./scripts/quotanoa-client.sh stop
+```
+
+```bat
+rem Windows CMD
+scripts\quotanoa-client.bat                  rem 不带参数 → 交互控制台
+scripts\quotanoa-client.bat start
+scripts\quotanoa-client.bat status
+scripts\quotanoa-client.bat logs 100
+scripts\quotanoa-client.bat stop
+```
+
+> 交互控制台里可直接输入编号（1–9）或子命令（如 `logs 100`、`start --log-level debug`），输入 `q` 退出；单条命令失败不会中断会话。
+
+> 默认以仓库根为基准：可执行文件 `./quotanoa-client`（Windows 为 `quotanoa-client.exe`）、配置 `./config.json`、日志 `./quotanoa-client.log`、PID `./quotanoa-client.pid`。可用环境变量 `QUOTANOA_BIN` / `QUOTANOA_CONFIG` / `QUOTANOA_LOG` / `QUOTANOA_PID` 覆盖。`start` 通过 `nohup`（sh）或 `Start-Process`（bat）后台运行；bat 脚本为纯 ASCII，兼容任意 Windows 代码页，错误流写入 `<日志>.err`。
+
 ## 下载与镜像
 
 GitHub Actions 在 `main` 推送与 `v*` 标签时构建：
