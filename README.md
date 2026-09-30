@@ -67,6 +67,14 @@ go build -o quotanoa-client ./cmd/quotanoa-client
 ./quotanoa-client config check --config config.json
 ```
 
+升级/修补配置（备份后补齐新增键并写入 `config_version`）：
+
+```bash
+./quotanoa-client config patch --config config.json
+```
+
+> 生成的配置带顶层 `config_version`（当前为 `1`）。旧版本、缺字段的配置可用 `config patch` 修补：会先把原文件备份为同目录下 `config_<日期>-<时间>_bak.json`，再补齐缺失键、写入当前版本号；已存在的值不会被覆盖。若文件版本高于当前程序支持，则拒绝修补。
+
 ## 下载与镜像
 
 GitHub Actions 在 `main` 推送与 `v*` 标签时构建：

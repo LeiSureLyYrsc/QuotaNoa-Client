@@ -1,4 +1,5 @@
 {
+  "config_version": 1,
   "client": {
     "name": "Home",
     "server_url": "ws://127.0.0.1:8320/v1/client/ws",

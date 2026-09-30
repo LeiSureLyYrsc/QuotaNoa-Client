@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ClientConfig holds connection/identity settings.
@@ -88,21 +91,28 @@ type ReconnectConfig struct {
 	Max float64 `json:"max"`
 }
 
-// Config is the full client configuration.
+// Config is the full client configuration. ConfigVersion is the schema version
+// written into generated files; `config patch` uses it to detect and repair
+// older files (adding newly introduced keys) after backing them up.
 type Config struct {
-	Client       ClientConfig       `json:"client"`
-	Refresh      RefreshConfig      `json:"refresh"`
-	CPA          CPAConfig          `json:"cpa"`
-	Volcengine   VolcengineConfig   `json:"volcengine"`
-	Workbuddy    WorkbuddyConfig    `json:"workbuddy"`
-	Qoder        QoderConfig        `json:"qoder"`
-	RefreshCache RefreshCacheConfig `json:"refreshcache"`
-	Reconnect    ReconnectConfig    `json:"reconnect"`
+	ConfigVersion int                `json:"config_version"`
+	Client        ClientConfig       `json:"client"`
+	Refresh       RefreshConfig      `json:"refresh"`
+	CPA           CPAConfig          `json:"cpa"`
+	Volcengine    VolcengineConfig   `json:"volcengine"`
+	Workbuddy     WorkbuddyConfig    `json:"workbuddy"`
+	Qoder         QoderConfig        `json:"qoder"`
+	RefreshCache  RefreshCacheConfig `json:"refreshcache"`
+	Reconnect     ReconnectConfig    `json:"reconnect"`
 }
+
+// CurrentConfigVersion is the schema version written into generated configs.
+const CurrentConfigVersion = 1
 
 // Default returns a configuration with safe defaults (refresh disabled).
 func Default() *Config {
 	return &Config{
+		ConfigVersion: CurrentConfigVersion,
 		Client: ClientConfig{
 			Name:      "Home",
 			ServerURL: "ws://127.0.0.1:8320/v1/client/ws",
@@ -324,4 +334,210 @@ func SaveDefault(path string, force bool) error {
 		return err
 	}
 	return nil
+}
+
+// PatchResult reports the outcome of Patch.
+type PatchResult struct {
+	// Changed reports whether the file was rewritten (missing keys or an older
+	// schema version).
+	Changed bool
+	// AddedKeys are the dotted paths of the keys that were filled in.
+	AddedKeys []string
+	// BackupPath is the backup file the original content was copied to; empty
+	// when nothing was written.
+	BackupPath string
+	// Path is the patched config file.
+	Path string
+	// Version is the config_version after patching.
+	Version int
+}
+
+// Patch repairs an existing config file: it backs the file up, fills in keys
+// that are missing relative to the current defaults and stamps the current
+// config_version. It never overwrites existing values and refuses to downgrade
+// a file written by a newer client.
+func Patch(path string) (*PatchResult, error) {
+	if path == "" {
+		path = "config.json"
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("读取配置文件失败：%w", err)
+	}
+	raw := map[string]any{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("解析配置文件失败：%w", err)
+	}
+	version := configVersionOf(raw)
+	if version > CurrentConfigVersion {
+		return nil, fmt.Errorf(
+			"配置版本 %d 高于当前程序支持的 %d，请升级 quotanoa-client 后再试",
+			version, CurrentConfigVersion,
+		)
+	}
+	defaults, err := defaultConfigMap()
+	if err != nil {
+		return nil, err
+	}
+	missing := missingDefaults(raw, defaults)
+	result := &PatchResult{Path: path, AddedKeys: flattenMissingKeys(missing), Version: version}
+	if len(missing) == 0 && version == CurrentConfigVersion {
+		return result, nil
+	}
+	backup, err := backupFile(path)
+	if err != nil {
+		return nil, err
+	}
+	merged := mergeMissing(raw, missing)
+	merged["config_version"] = CurrentConfigVersion
+	out, err := json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, '\n')
+	if err := writeFileAtomic(path, out, 0o600); err != nil {
+		return nil, err
+	}
+	result.Changed = true
+	result.BackupPath = backup
+	result.Version = CurrentConfigVersion
+	return result, nil
+}
+
+func configVersionOf(raw map[string]any) int {
+	switch v := raw["config_version"].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+// defaultConfigMap is the default config as a generic map, without
+// config_version (which is handled separately).
+func defaultConfigMap() (map[string]any, error) {
+	data, err := json.Marshal(Default())
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	delete(out, "config_version")
+	return out, nil
+}
+
+// missingDefaults returns the nested structure of keys absent from raw.
+func missingDefaults(raw, defaults map[string]any) map[string]any {
+	missing := map[string]any{}
+	for key, def := range defaults {
+		current, ok := raw[key]
+		if !ok {
+			missing[key] = def
+			continue
+		}
+		currentMap, currentOK := current.(map[string]any)
+		defMap, defOK := def.(map[string]any)
+		if currentOK && defOK {
+			if nested := missingDefaults(currentMap, defMap); len(nested) > 0 {
+				missing[key] = nested
+			}
+		}
+	}
+	return missing
+}
+
+// mergeMissing deep-merges missing into base, returning a new map.
+func mergeMissing(base, missing map[string]any) map[string]any {
+	merged := make(map[string]any, len(base)+len(missing))
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range missing {
+		current, currentOK := merged[key].(map[string]any)
+		nested, nestedOK := value.(map[string]any)
+		if currentOK && nestedOK {
+			merged[key] = mergeMissing(current, nested)
+			continue
+		}
+		merged[key] = value
+	}
+	return merged
+}
+
+// flattenMissingKeys renders a nested missing structure as sorted dotted paths.
+func flattenMissingKeys(missing map[string]any) []string {
+	keys := []string{}
+	for key, value := range missing {
+		if nested, ok := value.(map[string]any); ok {
+			for _, sub := range flattenMissingKeys(nested) {
+				keys = append(keys, key+"."+sub)
+			}
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// backupFile copies path next to itself as <stem>_<timestamp>_bak.<ext>,
+// appending a counter if needed to avoid overwriting an existing backup.
+func backupFile(path string) (string, error) {
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	if ext == "" {
+		ext = ".json"
+	}
+	stamp := time.Now().Format("20060102-150405")
+	target := filepath.Join(dir, fmt.Sprintf("%s_%s_bak%s", stem, stamp, ext))
+	for counter := 1; ; counter++ {
+		if _, err := os.Stat(target); os.IsNotExist(err) {
+			break
+		}
+		target = filepath.Join(dir, fmt.Sprintf("%s_%s_%d_bak%s", stem, stamp, counter, ext))
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("读取待备份配置失败：%w", err)
+	}
+	if err := writeFileAtomic(target, data, 0o600); err != nil {
+		return "", fmt.Errorf("备份配置失败：%w", err)
+	}
+	return target, nil
+}
+
+// writeFileAtomic writes data to path via a temp file + rename.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".quotanoa-config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }

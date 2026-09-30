@@ -77,6 +77,35 @@ func main() {
 		},
 	}
 	initCmd.Flags().StringVar(&initOut, "out", "config.json", "输出路径")
+	patchCmd := &cobra.Command{
+		Use:   "patch",
+		Short: "备份并补齐配置文件缺失项，写入当前配置版本号",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			result, err := config.Patch(configPath)
+			if err != nil {
+				return err
+			}
+			if !result.Changed {
+				fmt.Printf(
+					"配置已完整（config_version=%d），无需修补。\n配置文件：%s\n",
+					result.Version, result.Path,
+				)
+				return nil
+			}
+			abs, _ := filepath.Abs(result.Path)
+			backupAbs, _ := filepath.Abs(result.BackupPath)
+			fmt.Printf("配置已修补：%s\n", abs)
+			fmt.Printf("备份：%s\n", backupAbs)
+			fmt.Printf("config_version：%d\n", result.Version)
+			if len(result.AddedKeys) > 0 {
+				fmt.Println("补齐的键：")
+				for _, key := range result.AddedKeys {
+					fmt.Printf("  + %s\n", key)
+				}
+			}
+			return nil
+		},
+	}
 	configCmd.AddCommand(&cobra.Command{
 		Use:   "check",
 		Short: "校验配置并打印摘要（不联网）",
@@ -88,7 +117,7 @@ func main() {
 			fmt.Print(cfg.Redacted())
 			return nil
 		},
-	}, initCmd)
+	}, initCmd, patchCmd)
 
 	root.AddCommand(runCmd, versionCmd, configCmd)
 	root.RunE = runCmd.RunE
